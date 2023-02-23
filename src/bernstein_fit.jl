@@ -379,9 +379,9 @@ function plot_data_space_impl(pdf_params::BernsteinDirichletPDFParams, samples, 
 	    bspoly_params_d = bspoly_params
         end
 
-        pdf_params_i = BernsteinDirichletPDFParams(initial_U=[samples.v.initial_U[i]], initial_D=[samples.v.initial_D[i]],
+        pdf_params_i = BernsteinDirichletPDFParams(initial_U=Vector(samples.v.initial_U[i]), initial_D=Vector(samples.v.initial_D[i]),
                                         λ_g1=samples.v.λ_g1[i], λ_g2=samples.v.λ_g2[i],
-                                        K_g=samples.v.K_g[i], λ_q=samples.v.λ_q[i], 
+                                        K_g=samples.v.K_g[i], λ_q=samples.v.λ_q[i], K_q=samples.v.K_q[i],
                                         θ=Vector(samples.v.θ[i]),
                                         bspoly_params = bspoly_params,
                                         bspoly_params_d = bspoly_params_d)
