@@ -305,13 +305,13 @@ function plot_data_space_impl(pdf_params::BernsteinPDFParams, samples, qcdnum_pa
 
         θ_i = get_scaled_θ(U_list, D_list, Vector(samples.v.θ_tmp[i]))
 
-        vec_bspp = Vector(samples.bspoly_params[i])
+        vec_bspp = Vector(samples.v.bspoly_params[i])
         bspoly_params = [[vec_bspp[Int(2*i-1)], vec_bspp[Int(2*i)]] for i in 1:length(vec_bspp)/2]
         
         bspoly_params_d = 0
 
         try
-            vec_bsppd = Vector(samples.bspoly_params_d[i])
+            vec_bsppd = Vector(samples.v.bspoly_params_d[i])
             bspoly_params_d = [[vec_bsppd[Int(2*i-1)], vec_bsppd[Int(2*i)]] for i in 1:length(vec_bsppd)/2]
 	catch err
 	    bspoly_params_d = bspoly_params
@@ -367,13 +367,13 @@ function plot_data_space_impl(pdf_params::BernsteinDirichletPDFParams, samples, 
         counts_obs_ep_i = zeros(UInt64, nbins)
         counts_obs_em_i = zeros(UInt64, nbins)
             
-        vec_bspp = Vector(samples.bspoly_params[i])
+        vec_bspp = Vector(samples.v.bspoly_params[i])
         bspoly_params = [[vec_bspp[Int(2*i-1)], vec_bspp[Int(2*i)]] for i in 1:length(vec_bspp)/2]
         
         bspoly_params_d = 0
         
 	try
-            vec_bsppd = Vector(samples.bspoly_params_d[i])
+            vec_bsppd = Vector(samples.v.bspoly_params_d[i])
             bspoly_params_d = [[vec_bsppd[Int(2*i-1)], vec_bsppd[Int(2*i)]] for i in 1:length(vec_bsppd)/2]
 	catch err
 	    bspoly_params_d = bspoly_params
