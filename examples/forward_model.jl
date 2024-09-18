@@ -5,15 +5,21 @@
 # bins of the detector response.
 
 using QCDNUM, PartonDensity
-using Plots, Printf, NaNMath, Parameters
+using Plots, Printf, NaNMath, Parameters, Random, Distributions
+
+zeus_include_path = string(chop(pathof(PartonDensity), tail=20), "data/ZEUS_I1787035/ZEUS_I1787035.jl")
+
+const MD_DOCS = include(zeus_include_path)
 
 # ## Define input PDFs
 # We can use `DirichletPDFParams` or `ValencePDFParams`, as long
 # as we do so according to the *PDF parametrisation and priors* docs.
+random_seed = 42
 
 weights = [3.0, 1.0, 5.0, 5.0, 1.0, 1.0, 1.0, 0.5, 0.5]
+θ = rand(MersenneTwister(random_seed), Dirichlet(weights))
 pdf_params = DirichletPDFParams(K_u=4.0, K_d=6.0, λ_g1=0.7, λ_g2=-0.4,
-    K_g=6.0, λ_q=-0.5, K_q=5, seed=5, weights=weights);
+    K_g=6.0, λ_q=-0.5, K_q=5.0, θ=θ);
 
 # Plot the input PDFs
 
@@ -25,67 +31,43 @@ int_xtotx(pdf_params) ≈ 1
 
 # ## Define QCDNUM grids, weights and settings
 
-grid = QCDNUMGrid(x_min=[1.0e-3], x_weights=[1], nx=100,
+grid = QCDNUM.GridParams(x_min=[1.0e-3], x_weights=[1], nx=100,
     qq_bounds=[1.0e2, 3.0e4], qq_weights=[1.0, 1.0], nq=50, spline_interp=3)
 
-qcdnum_params = QCDNUMParameters(order=2, α_S=0.118, q0=100.0, grid=grid,
+qcdnum_params = QCDNUM.EvolutionParams(order=2, α_S=0.118, q0=100.0, grid_params=grid,
     n_fixed_flav=5, iqc=1, iqb=1, iqt=1, weight_type=1);
 
-# Initialise and set key parameters
+# Initialise
 
-QCDNUM.qcinit(-6, "")
-QCDNUM.setord(qcdnum_params.order)
-QCDNUM.setalf(qcdnum_params.α_S, qcdnum_params.q0)
-
-# Build grids
-
-g = qcdnum_params.grid
-QCDNUM.gxmake(g.x_min, g.x_weights, g.x_num_bounds, g.nx,
-    g.spline_interp);
-QCDNUM.gqmake(g.qq_bounds, g.qq_weights, g.qq_num_bounds, g.nq);
-
-# Define FFNS/VFNS
-
-QCDNUM.setcbt(qcdnum_params.n_fixed_flav, qcdnum_params.iqc,
-    qcdnum_params.iqb, qcdnum_params.iqt);
-
-# Build weight tables
-
-nw = QCDNUM.fillwt(qcdnum_params.weight_type)
-nw = QCDNUM.zmfillw()
+QCDNUM.init()
 
 # ## Evolve the PDFs using QCDNUM
 #
 # Define input PDF function
-# * See https://www.nikhef.nl/~h24/qcdnum-files/doc/qcdnum170115.pdf under `evolfg`
+# * See QCDNUM docs under `evolfg`
 #
 # There are functions available to generate the necessary input PDF function in
 # the correct format for `QCDNUM.jl` (see `get_input_pdf_func()`), along with
 # the mapping between this input function and quark species (see `input_pdf_map`).
 
-# Get function and wrap with c-style pointer
+# Get function and PDF input map to fully describe the `QCDNUM.InputPDF`
 
 my_func = get_input_pdf_func(pdf_params)
-input_pdf = @cfunction(my_func, Float64, (Ref{Int32}, Ref{Float64}))
+input_pdf = QCDNUM.InputPDF(func=my_func, map=input_pdf_map)
 
-# Find index of starting scale and evolve
+# Evolve the PDF over the specified grid
 
-iq0 = QCDNUM.iqfrmq(qcdnum_params.q0)
-pdf_loc = 1
-eps = QCDNUM.evolfg(pdf_loc, input_pdf, input_pdf_map, iq0)
-
-# ## Define necessary splines for cross section calculation
+ϵ = QCDNUM.evolve(input_pdf, qcdnum_params)
 
 # For splines
-
-splint_params = SPLINTParameters();
+nw = QCDNUM.zmfillw()
+splint_params = QCDNUM.SPLINTParams();
 quark_coeffs = QuarkCoefficients();
 
 # Define initial spline
 
-if !PartonDensity.splint_init_complete
-    QCDNUM.ssp_spinit(splint_params.nuser)
-end
+QCDNUM.ssp_spinit(splint_params.nuser)
+
 ia = QCDNUM.isp_s2make(splint_params.nsteps_x, splint_params.nsteps_q);
 xnd = QCDNUM.ssp_unodes(ia, splint_params.nnodes_x, 0);
 qnd = QCDNUM.ssp_vnodes(ia, splint_params.nnodes_q, 0);
@@ -98,22 +80,22 @@ QCDNUM.ssp_erase(ia);
 # Set nodes and fill spline with structure function
 
 iaFLup = QCDNUM.isp_s2user(xnd, splint_params.nnodes_x, qnd, splint_params.nnodes_q);
-QCDNUM.ssp_s2f123(iaFLup, pdf_loc, quark_coeffs.proup, 1, 0.0);
+QCDNUM.ssp_s2f123(iaFLup, qcdnum_params.output_pdf_loc, quark_coeffs.proup, 1, 0.0);
 
 iaF2up = QCDNUM.isp_s2user(xnd, splint_params.nnodes_x, qnd, splint_params.nnodes_q);
-QCDNUM.ssp_s2f123(iaF2up, pdf_loc, quark_coeffs.proup, 2, 0.0);
+QCDNUM.ssp_s2f123(iaF2up, qcdnum_params.output_pdf_loc, quark_coeffs.proup, 2, 0.0);
 
 iaF3up = QCDNUM.isp_s2user(xnd, splint_params.nnodes_x, qnd, splint_params.nnodes_q);
-QCDNUM.ssp_s2f123(iaF3up, pdf_loc, quark_coeffs.valup, 3, 0.0);
+QCDNUM.ssp_s2f123(iaF3up, qcdnum_params.output_pdf_loc, quark_coeffs.valup, 3, 0.0);
 
 iaFLdn = QCDNUM.isp_s2user(xnd, splint_params.nnodes_x, qnd, splint_params.nnodes_q);
-QCDNUM.ssp_s2f123(iaFLdn, pdf_loc, quark_coeffs.prodn, 1, 0.0);
+QCDNUM.ssp_s2f123(iaFLdn, qcdnum_params.output_pdf_loc, quark_coeffs.prodn, 1, 0.0);
 
 iaF2dn = QCDNUM.isp_s2user(xnd, splint_params.nnodes_x, qnd, splint_params.nnodes_q);
-QCDNUM.ssp_s2f123(iaF2dn, pdf_loc, quark_coeffs.prodn, 2, 0.0);
+QCDNUM.ssp_s2f123(iaF2dn, qcdnum_params.output_pdf_loc, quark_coeffs.prodn, 2, 0.0);
 
 iaF3dn = QCDNUM.isp_s2user(xnd, splint_params.nnodes_x, qnd, splint_params.nnodes_q);
-QCDNUM.ssp_s2f123(iaF3dn, 1, quark_coeffs.valdn, 3, 0.0);
+QCDNUM.ssp_s2f123(iaF3dn, qcdnum_params.output_pdf_loc, quark_coeffs.valdn, 3, 0.0);
 
 # store spline addresses
 QCDNUM.ssp_uwrite(splint_params.spline_addresses.F2up, Float64(iaF2up));
@@ -123,16 +105,19 @@ QCDNUM.ssp_uwrite(splint_params.spline_addresses.F3dn, Float64(iaF3dn));
 QCDNUM.ssp_uwrite(splint_params.spline_addresses.FLup, Float64(iaFLup));
 QCDNUM.ssp_uwrite(splint_params.spline_addresses.FLdn, Float64(iaFLdn));
 
-my_func = get_input_xsec_func()
-input_xsec = @cfunction(my_func, Float64, (Ref{Int32}, Ref{Int32}, Ref{UInt8}))
+my_funcp = get_input_xsec_func(1, MD_DOCS) # charge = 1
+input_xsecp = @cfunction(my_funcp, Float64, (Ref{Int32}, Ref{Int32}, Ref{UInt8}))
+
+my_funcm = get_input_xsec_func(-1, MD_DOCS) # charge = -1
+input_xsecm = @cfunction(my_funcm, Float64, (Ref{Int32}, Ref{Int32}, Ref{UInt8}))
 
 # plot
-
+g = qcdnum_params.grid_params
 xsec_on_grid = zeros(g.nx, g.nq);
 
 for ix = 1:g.nx
     for iq = 1:g.nq
-        xsec_on_grid[ix, iq] = _fun_xsec_i(ix, iq)
+        xsec_on_grid[ix, iq] = _fun_xsec_i(1, MD_DOCS, ix, iq) # charge = 1
     end
 end
 
@@ -154,15 +139,13 @@ plot!(xaxis=:log, legend=:bottomleft, xlabel="x",
 
 #
 
-set_lepcharge(1)
 iaF_eP = QCDNUM.isp_s2make(1, 2);
 QCDNUM.ssp_uwrite(splint_params.spline_addresses.F_eP, Float64(iaF_eP));
-QCDNUM.ssp_s2fill(iaF_eP, input_xsec, splint_params.rscut);
+QCDNUM.ssp_s2fill(iaF_eP, input_xsecp, splint_params.rscut);
 
-set_lepcharge(-1)
 iaF_eM = QCDNUM.isp_s2make(1, 2);
 QCDNUM.ssp_uwrite(splint_params.spline_addresses.F_eM, Float64(iaF_eM));
-QCDNUM.ssp_s2fill(iaF_eM, input_xsec, splint_params.rscut);
+QCDNUM.ssp_s2fill(iaF_eM, input_xsecm, splint_params.rscut);
 
 # plot spline
 
@@ -180,42 +163,17 @@ plot(p1, xlabel="x", ylabel="q2",
     xaxis=:log, yaxis=:log)
 
 # ## Integrate over the cross section spline and find expected events numbers
+#
+# Here, we neglect any possible contribution from systematic errors
 
-nbins = size(xbins_M_begin)[1]
+nbins = size(MD_DOCS.m_xbins_M_begin)[1]
 IntXsec_eP = zeros(nbins);
 IntXsec_eM = zeros(nbins);
 for i in 1:nbins
-    IntXsec_eP[i] = QCDNUM.dsp_ints2(iaF_eP, xbins_M_begin[i], xbins_M_end[i],
-        q2bins_M_begin[i], q2bins_M_end[i], 318.0, 4)
-    IntXsec_eM[i] = QCDNUM.dsp_ints2(iaF_eM, xbins_M_begin[i], xbins_M_end[i],
-        q2bins_M_begin[i], q2bins_M_end[i], 318.0, 4)
+    IntXsec_eP[i] = QCDNUM.dsp_ints2(iaF_eP, MD_DOCS.m_xbins_M_begin[i], MD_DOCS.m_xbins_M_end[i], MD_DOCS.m_q2bins_M_begin[i], MD_DOCS.m_q2bins_M_end[i], MD_DOCS.sqrtS, 4)
+    IntXsec_eM[i] = QCDNUM.dsp_ints2(iaF_eM, MD_DOCS.m_xbins_M_begin[i], MD_DOCS.m_xbins_M_end[i], MD_DOCS.m_q2bins_M_begin[i], MD_DOCS.m_q2bins_M_end[i], MD_DOCS.sqrtS, 4)
 end
 
-# 1 for e-p and 0 for e+p
+counts_pred_eP, counts_pred_eM = MD_DOCS.f_cross_section_to_counts(MD_DOCS.Ld_ePp, MD_DOCS.Ld_eMp, IntXsec_eP, IntXsec_eM)
 
-ePp = 0;
-eMp = 1;
-
-TM_eP = get_TM_elements(ePp);
-TM_eM = get_TM_elements(eMp);
-
-K_eP = get_K_elements(ePp);
-K_eM = get_K_elements(eMp);
-
-nbins_out = size(TM_eP)[2];
-
-xsec_pred_eP = zeros(nbins_out);
-xsec_pred_eM = zeros(nbins_out);
-
-for j in 1:nbins_out
-
-    for i in 1:nbins
-
-        xsec_pred_eP[j] += TM_eP[i, j] * (1.0 / K_eP[i]) * IntXsec_eP[i]
-        xsec_pred_eM[j] += TM_eM[i, j] * (1.0 / K_eM[i]) * IntXsec_eM[i]
-
-    end
-
-end
-
-xsec_pred_eM
+counts_pred_eM

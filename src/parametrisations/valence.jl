@@ -1,5 +1,8 @@
+using Random
+
 export ValencePDFParams, VALENCE_TYPE
-export get_scaled_θ
+export get_scaled_θ, get_θ_val
+import SpecialFunctions as sf
 
 VALENCE_TYPE = 1
 
@@ -15,20 +18,18 @@ Constructors:
 Fields:
 $(TYPEDFIELDS)
 """
-@with_kw struct ValencePDFParams <: AbstractPDFParams
-    param_type::Integer = VALENCE_TYPE
-    λ_u::Float64
-    K_u::Float64
-    λ_d::Float64
-    K_d::Float64
-    λ_g1::Float64
-    λ_g2::Float64
-    K_g::Float64
-    λ_q::Float64
-    K_q::Float64
-    seed::Integer = 0
-    weights::Vector{Float64} = ones(7)
-    θ::Vector{Float64} = get_dirichlet_samples(λ_u, K_u, λ_d, K_d, seed, weights)
+@with_kw struct ValencePDFParams{T<:Real,TV<:AbstractVector{T}} <: AbstractPDFParams
+    param_type::Int = VALENCE_TYPE
+    λ_u::T
+    K_u::T
+    λ_d::T
+    K_d::T
+    λ_g1::T
+    λ_g2::T
+    K_g::T
+    λ_q::T
+    K_q::T
+    θ::TV
 end
 
 """
@@ -55,15 +56,27 @@ function get_scaled_θ(λ_u::Float64, K_u::Float64, λ_d::Float64, K_d::Float64,
 end
 
 """
-    get_dirichlet_samples(λ_u, K_u, λ_d, K_d, seed, weights)
+    get_θ_val(rng, λ_u, K_u, λ_d, K_d, weights)
 
 Given valance shape parameters and weights, get samples θ
 that are correctly scaled. Relevant for `ValencePDFParams` 
-"""
-function get_dirichlet_samples(λ_u::Float64, K_u::Float64, λ_d::Float64,
-    K_d::Float64, seed::Integer, weights::Vector{Float64})
 
-    Random.seed!(seed)
+Optional RNG parameter.
+"""
+function get_θ_val(rng::AbstractRNG, λ_u::Float64, K_u::Float64, λ_d::Float64,
+    K_d::Float64, weights::Vector{Float64})
+
+    θ_tmp = rand(rng, Dirichlet(weights))
+
+    θ = get_scaled_θ(λ_u, K_u, λ_d, K_d, θ_tmp)
+
+    return θ
+
+end
+
+function get_θ_val(λ_u::Float64, K_u::Float64, λ_d::Float64,
+    K_d::Float64, weights::Vector{Float64})
+
     θ_tmp = rand(Dirichlet(weights))
 
     θ = get_scaled_θ(λ_u, K_u, λ_d, K_d, θ_tmp)

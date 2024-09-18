@@ -2,21 +2,18 @@
 #
 # In this example we show how to bring the PDF parametrisation and
 # forward model together with `BAT.jl` to perform a fit of simulated data.
-# This fit is a work in progress and just a starting point for verification
-# of the method.
 
 using BAT, DensityInterface
 using PartonDensity
 using QCDNUM
 using Plots, Random, Distributions, ValueShapes, ParallelProcessingTools
 using StatsBase, LinearAlgebra
-
+zeus_include_path = string(chop(pathof(PartonDensity), tail=20), "data/ZEUS_I1787035/ZEUS_I1787035.jl")
+MD_ZEUS_I1787035 = include(zeus_include_path)
 gr(fmt=:png);
+rng = MersenneTwister(42)
 
 # ## Simulate some data
-
-seed = 42
-Random.seed!(seed) # for reproducibility
 
 # We can start off by simulating some fake data for us to fit. This way,
 # we know exactly what initial conditions we have specified and can check
@@ -29,8 +26,10 @@ Random.seed!(seed) # for reproducibility
 # See the *Input PDF parametrisation and priors* example for more information on the
 # definition of the input PDFs. Here, we use the Dirichlet parametrisation.
 
+weights = [30.0, 15.0, 12.0, 6.0, 3.6, 0.85, 0.85, 0.85, 0.85]
+θ = rand(rng, Dirichlet(weights))
 pdf_params = DirichletPDFParams(K_u=4.0, K_d=4.0, λ_g1=1.5, λ_g2=-0.4, K_g=6.0,
-    λ_q=-0.25, K_q=5, weights=[30.0, 15.0, 12.0, 6.0, 3.6, 0.85, 0.85, 0.85, 0.85]);
+    λ_q=-0.25, K_q=5.0, θ=θ);
 
 @info "Valence λ:" pdf_params.λ_u pdf_params.λ_d
 
@@ -43,21 +42,20 @@ plot_input_pdfs(pdf_params)
 # functions to do so. For more details, see the *Forward model* example.
 
 # first specify QCDNUM inputs
-qcdnum_grid = QCDNUMGrid(x_min=[1.0e-3, 1.0e-1, 5.0e-1], x_weights=[1, 2, 2], nx=100,
+qcdnum_grid = QCDNUM.GridParams(x_min=[1.0e-3, 1.0e-1, 5.0e-1], x_weights=[1, 2, 2], nx=100,
     qq_bounds=[1.0e2, 3.0e4], qq_weights=[1.0, 1.0], nq=50, spline_interp=3)
-qcdnum_params = QCDNUMParameters(order=2, α_S=0.118, q0=100.0, grid=qcdnum_grid,
+qcdnum_params = QCDNUM.EvolutionParams(order=2, α_S=0.118, q0=100.0, grid_params=qcdnum_grid,
     n_fixed_flav=5, iqc=1, iqb=1, iqt=1, weight_type=1);
 
 # now SPLINT and quark coefficients
-splint_params = SPLINTParameters();
+splint_params = QCDNUM.SPLINTParams();
 quark_coeffs = QuarkCoefficients();
 
 # initialise QCDNUM
-forward_model_init(qcdnum_grid, qcdnum_params, splint_params)
+forward_model_init(qcdnum_params, splint_params)
 
 # run forward model 
-counts_pred_ep, counts_pred_em = forward_model(pdf_params, qcdnum_params,
-    splint_params, quark_coeffs);
+counts_pred_ep, counts_pred_em = forward_model(pdf_params, qcdnum_params, splint_params, quark_coeffs, MD_ZEUS_I1787035);
 
 #
 # take a poisson sample
@@ -85,7 +83,9 @@ sim_data["counts_obs_ep"] = counts_obs_ep;
 sim_data["counts_obs_em"] = counts_obs_em;
 
 # write to file
-pd_write_sim("output/simulation.h5", pdf_params, sim_data)
+pd_write_sim("output/simulation_dirichlet.h5", pdf_params, sim_data, MD_ZEUS_I1787035)
+QCDNUM.save_params("output/params_dir.h5", qcdnum_params)
+QCDNUM.save_params("output/params_dir.h5", splint_params)
 
 # ## Fit the simulated data
 #
@@ -94,7 +94,7 @@ pd_write_sim("output/simulation.h5", pdf_params, sim_data)
 # For now, let's try relatively narrow priors centred on the true values.
 
 prior = NamedTupleDist(
-    θ=Dirichlet(pdf_params.weights),
+    θ=Dirichlet(weights),
     K_u=Uniform(3.0, 7.0),
     K_d=Uniform(3.0, 7.0),
     λ_g1=Uniform(1.0, 2.0),
@@ -109,8 +109,6 @@ prior = NamedTupleDist(
 # then running the forward model to get the predicted counts and comparing to
 # the observed counts using a simple Poisson likelihood.
 #
-# The `@critical` macro is used because `forward_model()` is currently not thread safe, so
-# this protects it from being run in parallel.
 
 likelihood = let d = sim_data
 
@@ -121,17 +119,9 @@ likelihood = let d = sim_data
     logfuncdensity(function (params)
 
         pdf_params = DirichletPDFParams(K_u=params.K_u, K_d=params.K_d, λ_g1=params.λ_g1, λ_g2=params.λ_g2,
-            K_g=params.K_g, λ_q=params.λ_q, K_q=params.K_q, θ=params.θ)
+            K_g=params.K_g, λ_q=params.λ_q, K_q=params.K_q, θ=Vector(params.θ))
 
-        #Ensure u-valence weight > d-valence weight
-        if params.θ[2] > params.θ[1]
-
-            return -Inf
-
-        end
-
-        counts_pred_ep, counts_pred_em = @critical forward_model(pdf_params,
-            qcdnum_params, splint_params, quark_coeffs)
+        counts_pred_ep, counts_pred_em = @critical forward_model(pdf_params, qcdnum_params, splint_params, quark_coeffs, MD_ZEUS_I1787035)
 
         ll_value = 0.0
         for i in 1:nbins
@@ -140,7 +130,6 @@ likelihood = let d = sim_data
                 @debug "counts_pred_ep[i] < 0, setting to 0" i counts_pred_ep[i]
                 counts_pred_ep[i] = 0
             end
-
             if counts_pred_em[i] < 0
                 @debug "counts_pred_em[i] < 0, setting to 0" i counts_pred_em[i]
                 counts_pred_em[i] = 0
@@ -157,16 +146,15 @@ end
 # We can now run the MCMC sampler. We will start by using the
 # Metropolis-Hastings algorithm as implemented in `BAT.jl`.
 # To get reasonable results, we need to run the sampler for a
-# long time (several hours). To save time in this demo, we will
+# longer time (~10s of min). To save time in this demo, we will
 # work with a ready-made results file. To actually run the sampler,
 # simply uncomment the code below.
 
 #posterior = PosteriorDensity(likelihood, prior);
 #mcalg = MetropolisHastings(proposal=BAT.MvTDistProposal(10.0))
-#convergence = BrooksGelmanConvergence(threshold=1.3);
-#burnin = MCMCMultiCycleBurnin(max_ncycles=50);
+#convergence = BrooksGelmanConvergence(threshold=1.3)
+#samples = bat_sample(posterior, MCMCSampling(mcalg=mcalg, nsteps=10^4, nchains=2, strict=false)).result;
 
-#samples = bat_sample(posterior, MCMCSampling(mcalg=mcalg, nsteps=10^4, nchains=2)).result;
 # Alternatively, we could also try a nested sampling approach
 # here for comparison. This is easily done thanks to the
 # interface of `BAT.jl`, you will just need to add the
@@ -185,8 +173,13 @@ end
 #
 # First, let's load our simulation inputs and results
 
-pdf_params, sim_data = pd_read_sim("output/demo_simulation_dirichlet.h5");
+pdf_params, sim_data = pd_read_sim("output/demo_simulation_dirichlet.h5", MD_ZEUS_I1787035);
 samples = bat_read("output/demo_results_dirichlet.h5").result;
+
+# We can use the same QCDNUM params as above
+loaded_params = QCDNUM.load_params("output/params_dir.h5")
+qcdnum_params = loaded_params["evolution_params"]
+splint_params = loaded_params["splint_params"]
 
 # We can check some diagnostics using built in `BAT.jl`, such as the
 # effective sample size shown below
@@ -241,7 +234,7 @@ hline!([pdf_params.θ[2]], color="black", label="true θ[2]", lw=3)
 # Using BAT recipe
 function wrap_xtotx(p::NamedTuple, x::Real)
     pdf_params = DirichletPDFParams(K_u=p.K_u, K_d=p.K_d, λ_g1=p.λ_g1,
-        λ_g2=p.λ_g2, K_g=p.K_g, λ_q=p.λ_q, K_q=p.K_q, θ=p.θ)
+        λ_g2=p.λ_g2, K_g=p.K_g, λ_q=p.λ_q, K_q=p.K_q, θ=Vector(p.θ))
     return log(xtotx(x, pdf_params))
 end
 
@@ -253,13 +246,10 @@ plot!(x_grid, [log(xtotx(x, pdf_params)) for x in x_grid], color="black", lw=3,
 plot!(ylabel="log(xtotx)")
 
 # Using `PartonDensity.jl`
-plot_model_space(pdf_params, samples, nsamples=500)
+plot_model_space(pdf_params, samples, nsamples=200)
 
 # Alternatively, we can also visualise the implications of the fit
 # in the *data space*, as shown below. 
 
-plot_data_space(pdf_params, sim_data, samples, qcdnum_grid, qcdnum_params,
-    splint_params, quark_coeffs, nsamples=500)
-
-# The first results seem promising, but these are really just first checks
-# and more work will have to be done to verify the method.
+plot_data_space(pdf_params, sim_data, samples, qcdnum_params,
+    splint_params, quark_coeffs, MD_ZEUS_I1787035, nsamples=200)

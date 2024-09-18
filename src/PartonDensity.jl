@@ -1,18 +1,19 @@
 module PartonDensity
 
+using ArgCheck
 using Distributions
 using DocStringExtensions
 using Random
 using Parameters
 using Plots
 
+include("parton.jl")
 include("parametrisations/parametrisations.jl")
-include("qcdnum_interface.jl")
+include("metadata.jl")
+include("parameters_IO.jl")
 include("cross_section.jl")
 include("forward_model.jl")
-include("forward_model_sysErr.jl")
-include("zeus.jl")
-include("bernstein_forward_model.jl")
+include("plotting.jl")
 
 using Requires
 function __init__()

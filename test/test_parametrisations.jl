@@ -3,7 +3,6 @@ using Test
 using Random, Distributions
 using Plots, ValueShapes
 import BAT
-
 @testset "Valence PDF parametrisation" begin
 
     local val_pdf_params
@@ -20,20 +19,21 @@ import BAT
         λ_q = rand(Uniform(-1, 0))
         K_q = rand(Uniform(1, 5))
         weights = ones(7)
+        θ = get_θ_val(λ_u, K_u, λ_d, K_d, weights)
 
         val_pdf_params = ValencePDFParams(λ_u=λ_u, K_u=K_u,
-            λ_d=λ_d, K_d=K_d, λ_g1=λ_g2,
+            λ_d=λ_d, K_d=K_d, λ_g1=λ_g1,
             λ_g2=λ_g2, K_g=K_g, λ_q=λ_q, K_q=K_q,
-            weights=weights)
-
+            θ=θ)
 
         @test int_xtotx(val_pdf_params) ≈ 1.0
 
+        x = 0.5
+        @test xtotx(x, val_pdf_params) == PartonDensity.xtotx_valence(x, λ_u, K_u, λ_d, K_d, λ_g1, λ_g2, K_g, λ_q, K_q, θ)
+
     end
 
-    @test typeof(val_pdf_params) == ValencePDFParams
-
-    @test val_pdf_params.param_type == VALENCE_TYPE
+    @test typeof(val_pdf_params) == ValencePDFParams{Float64,Vector{Float64}}
 
     p = plot_input_pdfs(val_pdf_params)
 
@@ -59,18 +59,20 @@ end
         λ_q = rand(Uniform(-1, 0))
         K_q = rand(Uniform(1, 5))
         weights = ones(9)
+        θ = rand(Dirichlet(weights))
 
-        dir_pdf_params = DirichletPDFParams(K_u=K_u, K_d=K_d, λ_g1=λ_g2,
+        dir_pdf_params = DirichletPDFParams(K_u=K_u, K_d=K_d, λ_g1=λ_g1,
             λ_g2=λ_g2, K_g=K_g, λ_q=λ_q, K_q=K_q,
-            weights=weights)
+            θ=θ)
 
         @test int_xtotx(dir_pdf_params) ≈ 1.0
 
+        x = 0.5
+        @test xtotx(x, dir_pdf_params) == PartonDensity.xtotx_dirichlet(x, dir_pdf_params.λ_u, K_u, dir_pdf_params.λ_d, K_d, λ_g1, λ_g2, K_g, λ_q, K_q, θ)
+
     end
 
-    @test typeof(dir_pdf_params) == DirichletPDFParams
-
-    @test dir_pdf_params.param_type == DIRICHLET_TYPE
+    @test typeof(dir_pdf_params) == DirichletPDFParams{Float64,Vector{Float64}}
 
     p = plot_input_pdfs(dir_pdf_params)
 
@@ -96,12 +98,11 @@ end
         λ_q = rand(Uniform(-1, 0))
         K_q = rand(Uniform(1, 5))
         weights = ones(7)
+        seed = i
 
         bern_pdf_params = BernsteinPDFParams(U_weights=U_weights,
             D_weights=D_weights, λ_g1=λ_g2,
-            λ_g2=λ_g2, K_g=K_g, λ_q=λ_q, K_q=K_q,
-            weights=weights)
-
+            λ_g2=λ_g2, K_g=K_g, λ_q=λ_q, K_q=K_q, seed=seed, weights=weights)
 
         @test int_xtotx(bern_pdf_params) ≈ 1.0
 
